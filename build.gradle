@@ -1,5 +1,7 @@
 buildscript {
 	repositories {
+	maven { url 'http://maven.aliyun.com/nexus/content/groups/public/' }
+	maven{ url 'http://maven.aliyun.com/nexus/content/repositories/jcenter'}
         jcenter()
     }
 
@@ -25,6 +27,8 @@ allprojects {
     apply plugin: 'eclipse'
 
     repositories {
+	maven { url 'http://maven.aliyun.com/nexus/content/groups/public/' }
+	maven{ url 'http://maven.aliyun.com/nexus/content/repositories/jcenter'}
         jcenter()
 
         // oss-candidate for -rc.* verions:

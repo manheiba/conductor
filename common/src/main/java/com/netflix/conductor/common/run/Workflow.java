@@ -121,6 +121,10 @@ public class Workflow extends Auditable{
 	@Min(value = 0, message = "workflow priority: ${validatedValue} should be minimum {value}")
 	@Max(value = 99, message = "workflow priority: ${validatedValue} should be maximum {value}")
 	private int priority;
+	
+	// true=success false=failed blank=unarchived
+    @ProtoField(id = 99)
+	private String archived;
 
 	public Workflow(){
 
@@ -432,7 +436,15 @@ public class Workflow extends Auditable{
                 getWorkflowDefinition().getVersion() :
                 version;
     }
-
+    
+	public String getArchived() {
+		return archived;
+	}
+	
+	public void setArchived(String archived) {
+		this.archived = archived;
+	}
+	
 	/**
 	 * @param externalOutputPayloadStoragePath the external storage path where the workflow output payload is stored
 	 */

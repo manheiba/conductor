@@ -774,26 +774,39 @@ public class WorkflowExecutor {
      * @throws ApplicationException
      */
     public void updateTask(TaskResult taskResult) {
-        if (taskResult == null) {
-            throw new ApplicationException(Code.INVALID_INPUT, "Task object is null");
+    	long startMil = System.currentTimeMillis();
+    	LOGGER.debug("1.updateTask {} : taskresult {} ", taskResult.getTaskId(),taskResult.toString());
+		// update by manheiba  @20191117 for simpleEventProcessor
+        if (taskResult == null || null == taskResult.getTaskId() || "".equals(taskResult.getTaskId()) ) {
+            throw new ApplicationException(Code.INVALID_INPUT, "Task object/taskid is null");
         }
-
+        String taskId = taskResult.getTaskId();
+        
+		// update by manheiba @20191212 for simpleEventProcessor must be Code.BACKEND_ERROR
+//        if(!executionLockService.acquireLock(taskId)){
+//        	LOGGER.info("Task: {} had be locked ", taskId);
+//        	throw new ApplicationException(Code.LOCKED_ERROR, "Task " + taskId +" had be locked");
+//        }
         String workflowId = taskResult.getWorkflowInstanceId();
-        Workflow workflowInstance = executionDAOFacade.getWorkflowById(workflowId, true);
-
+        
+//        try {
+        // update by manheiba @20191212 use false value for performace  at  `getWorkflowById(workflowId, false);`
+        Workflow workflowInstance = executionDAOFacade.getWorkflowById(workflowId, false);
+        
         // FIXME Backwards compatibility for legacy workflows already running.
         // This code will be removed in a future version.
         if (workflowInstance.getWorkflowDefinition() == null) {
             workflowInstance = metadataMapperService.populateWorkflowWithDefinitions(workflowInstance);
         }
-
+        LOGGER.debug("2.updateTask {} : redis workflowInstance {} ", taskResult.getTaskId(),workflowInstance.toString());
         Task task = Optional.ofNullable(executionDAOFacade.getTaskById(taskResult.getTaskId()))
                 .orElseThrow(() -> new ApplicationException(Code.NOT_FOUND, "No such task found by id: " + taskResult.getTaskId()));
-
+        LOGGER.debug("3.updateTask {} : task {} ", taskResult.getTaskId(),task.toString());
+        
         LOGGER.debug("Task: {} belonging to Workflow {} being updated", task, workflowInstance);
 
-        String taskQueueName = QueueUtils.getQueueName(task);
 
+        String taskQueueName = QueueUtils.getQueueName(task);
         if (task.getStatus().isTerminal()) {
             // Task was already updated....
             queueDAO.remove(taskQueueName, taskResult.getTaskId());
@@ -872,12 +885,15 @@ public class WorkflowExecutor {
 
             new RetryUtil<>().retryOnException(() -> {
                 executionDAOFacade.updateTask(task);
+                LOGGER.debug("4.updateTask {} : changed task {}", taskResult.getTaskId(),task.toString());
                 return null;
             }, null, null, 2, updateTaskDesc, updateTaskOperation);
 
             //If the task has failed update the failed task reference name in the workflow.
             //This gives the ability to look at workflow and see what tasks have failed at a high level.
             if (FAILED.equals(task.getStatus()) || FAILED_WITH_TERMINAL_ERROR.equals(task.getStatus())) {
+            	// update by manheiba @20191212 for performance added `workflowInstance = executionDAOFacade.getWorkflowById(workflowId, true);`
+            	workflowInstance = executionDAOFacade.getWorkflowById(workflowId, true);
                 workflowInstance.getFailedReferenceTaskNames().add(task.getReferenceTaskName());
                 executionDAOFacade.updateWorkflow(workflowInstance);
                 LOGGER.debug("Task: {} has a {} status and the Workflow has been updated with failed task reference", task, task.getStatus());
@@ -900,6 +916,12 @@ public class WorkflowExecutor {
             Monitors.recordTaskExecutionTime(task.getTaskDefName(), duration, true, task.getStatus());
             Monitors.recordTaskExecutionTime(task.getTaskDefName(), lastDuration, false, task.getStatus());
         }
+//    }
+//    finally {
+//        	executionLockService.releaseLock(taskId);
+//        	LOGGER.debug("5.updateTask {} : updated taskstatus {} workflowid {} estimeit {}ms  ", taskResult.getTaskId(),taskResult.getStatus(),workflowId,System.currentTimeMillis()-startMil);
+//        }
+
     }
 
     public Task getTask(String taskId) {
@@ -944,15 +966,21 @@ public class WorkflowExecutor {
         if (!executionLockService.acquireLock(workflowId)) {
             return false;
         }
-
+        
         // If it is a new workflow, the tasks will be still empty even though include tasks is true
         Workflow workflow = executionDAOFacade.getWorkflowById(workflowId, true);
 
-        // FIXME Backwards compatibility for legacy workflows already running.
-        // This code will be removed in a future version.
-        workflow = metadataMapperService.populateWorkflowWithDefinitions(workflow);
-
         try {
+
+            // update by manheiba @20191122 for Workflow flow is Terminal,but Still in _decideQueue .Running forever
+            if(workflow.getStatus().isTerminal()) {
+            	return true;
+            }
+            
+            // FIXME Backwards compatibility for legacy workflows already running.
+            // This code will be removed in a future version.
+            workflow = metadataMapperService.populateWorkflowWithDefinitions(workflow);
+            
             DeciderService.DeciderOutcome outcome = deciderService.decide(workflow);
             if (outcome.isComplete) {
                 completeWorkflow(workflow);
@@ -1161,7 +1189,8 @@ public class WorkflowExecutor {
             }
 
             String workflowId = task.getWorkflowInstanceId();
-            Workflow workflow = executionDAOFacade.getWorkflowById(workflowId, true);
+            // update by manheiba @20191212 use `false` value for performace  at  `getWorkflowById(workflowId, false);`
+            Workflow workflow = executionDAOFacade.getWorkflowById(workflowId, false);
 
             if (task.getStartTime() == 0) {
                 task.setStartTime(System.currentTimeMillis());

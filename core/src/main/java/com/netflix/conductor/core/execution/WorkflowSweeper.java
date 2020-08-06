@@ -15,14 +15,18 @@
  */
 package com.netflix.conductor.core.execution;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.netflix.conductor.core.WorkflowContext;
 import com.netflix.conductor.core.config.Configuration;
 import com.netflix.conductor.core.execution.ApplicationException.Code;
+import com.netflix.conductor.core.utils.GracefullyShutdownUtil;
+import com.netflix.conductor.core.utils.ShutdownHookManager;
 import com.netflix.conductor.dao.QueueDAO;
 import com.netflix.conductor.metrics.Monitors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.util.LinkedList;
@@ -31,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,6 +49,8 @@ public class WorkflowSweeper {
 	private static final Logger logger = LoggerFactory.getLogger(WorkflowSweeper.class);
 
 	private ExecutorService executorService;
+	
+	private ScheduledExecutorService deciderPool;
 
 	private Configuration config;
 
@@ -59,17 +66,26 @@ public class WorkflowSweeper {
 		this.queueDAO = queueDAO;
 		this.executorThreadPoolSize = config.getIntProperty("workflow.sweeper.thread.count", 5);
 		if(this.executorThreadPoolSize > 0) {
-			this.executorService = Executors.newFixedThreadPool(executorThreadPoolSize);
+			ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-WorkflowSweeper-Fixed-%d").build();
+			this.executorService = Executors.newFixedThreadPool(executorThreadPoolSize,threadFactory);
 			init(workflowExecutor);
 			logger.info("Workflow Sweeper Initialized");
 		} else {
 			logger.warn("Workflow sweeper is DISABLED");
 		}
-
+		//Runtime.getRuntime().addShutdownHook(new Thread(()-> {shutdown();}));
+		ShutdownHookManager.get().addShutdownHook(()-> {shutdown();}, 4);
 	}
+    
+    //@PreDestroy
+    private void shutdown() {
+        GracefullyShutdownUtil.shutdownExecutorService("WorkflowSweeper.deciderPool",deciderPool,0,30);
+        GracefullyShutdownUtil.shutdownExecutorService("WorkflowSweeper.executorService",executorService,0,30);
+    }
 
 	public void init(WorkflowExecutor workflowExecutor) {
-		ScheduledExecutorService deciderPool = Executors.newScheduledThreadPool(1);
+		ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-WorkflowSweeper-Scheduled-%d").build();
+		deciderPool = Executors.newScheduledThreadPool(1,threadFactory);
 		deciderPool.scheduleWithFixedDelay(() -> {
 			try {
 				boolean disable = config.disableSweep();

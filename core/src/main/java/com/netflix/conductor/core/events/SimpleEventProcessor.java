@@ -15,27 +15,6 @@
  */
 package com.netflix.conductor.core.events;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.annotations.VisibleForTesting;
-import com.netflix.conductor.common.metadata.events.EventExecution;
-import com.netflix.conductor.common.metadata.events.EventExecution.Status;
-import com.netflix.conductor.common.metadata.events.EventHandler;
-import com.netflix.conductor.common.metadata.events.EventHandler.Action;
-import com.netflix.conductor.common.utils.RetryUtil;
-import com.netflix.conductor.core.config.Configuration;
-import com.netflix.conductor.core.events.queue.Message;
-import com.netflix.conductor.core.events.queue.ObservableQueue;
-import com.netflix.conductor.core.execution.ApplicationException;
-import com.netflix.conductor.core.utils.JsonUtils;
-import com.netflix.conductor.metrics.Monitors;
-import com.netflix.conductor.service.ExecutionService;
-import com.netflix.conductor.service.MetadataService;
-import com.spotify.futures.CompletableFutures;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -48,8 +27,39 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import javax.annotation.PreDestroy;
+import javax.inject.Inject;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.netflix.conductor.common.metadata.events.EventExecution;
+import com.netflix.conductor.common.metadata.events.EventExecution.Status;
+import com.netflix.conductor.common.metadata.events.EventHandler;
+import com.netflix.conductor.common.metadata.events.EventHandler.Action;
+import com.netflix.conductor.common.utils.RetryUtil;
+import com.netflix.conductor.core.config.Configuration;
+import com.netflix.conductor.core.events.queue.Message;
+import com.netflix.conductor.core.events.queue.ObservableQueue;
+import com.netflix.conductor.core.events.queue.dyno.DynoObservableQueue;
+import com.netflix.conductor.core.execution.ApplicationException;
+import com.netflix.conductor.core.utils.GracefullyShutdownUtil;
+import com.netflix.conductor.core.utils.JsonUtils;
+import com.netflix.conductor.core.utils.ShutdownHookManager;
+import com.netflix.conductor.metrics.Monitors;
+import com.netflix.conductor.service.ExecutionService;
+import com.netflix.conductor.service.MetadataService;
+import com.spotify.futures.CompletableFutures;
 
 /**
  * @author Viren
@@ -60,8 +70,7 @@ public class SimpleEventProcessor implements EventProcessor {
     private static final Logger logger = LoggerFactory.getLogger(SimpleEventProcessor.class);
     private static final String className = SimpleEventProcessor.class.getSimpleName();
     private static final int RETRY_COUNT = 3;
-
-
+	
     private final MetadataService metadataService;
     private final ExecutionService executionService;
     private final ActionProcessor actionProcessor;
@@ -71,7 +80,11 @@ public class SimpleEventProcessor implements EventProcessor {
     private final Map<String, ObservableQueue> eventToQueueMap = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final JsonUtils jsonUtils;
+    
+	private static ConcurrentHashMap<String,LinkedBlockingQueue<Runnable>> eventLinkedBlockingQueueMap = new ConcurrentHashMap<String,LinkedBlockingQueue<Runnable>>();
+	private static ConcurrentHashMap<String,ExecutorService> eventExecutorServiceMap = new ConcurrentHashMap<String,ExecutorService>();
 
+    
     @Inject
     public SimpleEventProcessor(ExecutionService executionService, MetadataService metadataService,
                                 ActionProcessor actionProcessor, EventQueues eventQueues, JsonUtils jsonUtils, Configuration config) {
@@ -80,16 +93,28 @@ public class SimpleEventProcessor implements EventProcessor {
         this.actionProcessor = actionProcessor;
         this.eventQueues = eventQueues;
         this.jsonUtils = jsonUtils;
-
         int executorThreadCount = config.getIntProperty("workflow.event.processor.thread.count", 2);
         if (executorThreadCount > 0) {
-            executorService = Executors.newFixedThreadPool(executorThreadCount);
+        	ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-SimpleEventProcessor-Fixed-%d").build();
+            executorService = Executors.newFixedThreadPool(executorThreadCount,threadFactory);
             refresh();
-            Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(this::refresh, 60, 60, TimeUnit.SECONDS);
+            ThreadFactory threadFactory1 = new ThreadFactoryBuilder().setNameFormat("Thread-SimpleEventProcessor-SingleScheduled").build();
+            Executors.newSingleThreadScheduledExecutor(threadFactory1).scheduleAtFixedRate(this::refresh, 60, 60, TimeUnit.SECONDS);
             logger.info("Event Processing is ENABLED. executorThreadCount set to {}", executorThreadCount);
         } else {
             logger.warn("Event processing is DISABLED. executorThreadCount set to {}", executorThreadCount);
         }
+        //Runtime.getRuntime().addShutdownHook(new Thread(()-> {shutdown();}));
+        ShutdownHookManager.get().addShutdownHook(()-> {shutdown();}, 4);
+    }
+    
+    //@PreDestroy
+    private void shutdown() {
+    	DynoObservableQueue.isShutdown=true;
+        eventExecutorServiceMap.forEach((key,value) -> {
+        	GracefullyShutdownUtil.shutdownExecutorService("SimpleEventProcessor."+key,value,0,30);
+        });
+        GracefullyShutdownUtil.shutdownExecutorService("SimpleEventProcessor.executorService",executorService,0,30);
     }
 
     /**
@@ -137,31 +162,61 @@ public class SimpleEventProcessor implements EventProcessor {
     }
 
     private void listen(ObservableQueue queue) {
-        queue.observe().subscribe((Message msg) -> handle(queue, msg));
+    	queue.observe().subscribe((Message msg) -> handle(queue, msg));	
     }
 
     private void handle(ObservableQueue queue, Message msg) {
-        try {
-            executionService.addMessage(queue.getName(), msg);
+    	// update by manheiba @20191117 
+    	LinkedBlockingQueue<Runnable> eventLinkedBlockingQueue = eventLinkedBlockingQueueMap.get(queue.getName());
+    	ThreadPoolExecutor eventExeceutorService = (ThreadPoolExecutor)eventExecutorServiceMap.get(queue.getName());
+    	if(eventLinkedBlockingQueue!=null) {
+    		while(eventLinkedBlockingQueue.remainingCapacity()<1  && eventExeceutorService !=null && eventExeceutorService.getActiveCount()==eventExeceutorService.getMaximumPoolSize()) {
+    			try {
+    				TimeUnit.MILLISECONDS.sleep(200);
+    				System.out.println(queue.getName() + " linkedBlockingQueueMessage is busy");
+    			} catch (InterruptedException e) {
+    			}
+    		}
+    	}else {
+    		eventLinkedBlockingQueue = new LinkedBlockingQueue<Runnable>(100);
+    		eventLinkedBlockingQueueMap.put(queue.getName(),eventLinkedBlockingQueue);
+    	}
+    	
+    	if(eventExeceutorService == null) {
+    		ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-SimpleEventProcessor-"+queue.getName()+"-%d").build();
+    		eventExeceutorService = new ThreadPoolExecutor(2, 50, 1, TimeUnit.MINUTES, eventLinkedBlockingQueue,namedThreadFactory) ;
+    		eventExecutorServiceMap.put(queue.getName(),eventExeceutorService);
+    	}
+    	
+    	eventExeceutorService.submit(()->{
+    		try {
+                executionService.addMessage(queue.getName(), msg);
 
-            String event = queue.getType() + ":" + queue.getName();
-            logger.debug("Evaluating message: {} for event: {}", msg.getId(), event);
-            List<EventExecution> transientFailures = executeEvent(event, msg);
+                String event = queue.getType() + ":" + queue.getName();
+                logger.debug("Evaluating message: {} for event: {}", msg.getId(), event);
+                List<EventExecution> transientFailures = executeEvent(event, msg);
 
-            if (transientFailures.isEmpty()) {
-                queue.ack(Collections.singletonList(msg));
-                logger.debug("Message: {} acked on queue: {}", msg.getId(), queue.getName());
-            } else if (queue.rePublishIfNoAck()) {
-                // re-submit this message to the queue, to be retried later
-                // This is needed for queues with no unack timeout, since messages are removed from the queue
-                queue.publish(Collections.singletonList(msg));
-                logger.debug("Message: {} published to queue: {}", msg.getId(), queue.getName());
+                if (transientFailures.isEmpty()) {
+                    queue.ack(Collections.singletonList(msg));
+                    logger.debug("Message: {} acked on queue: {}", msg.getId(), queue.getName());
+                //} else if (queue.rePublishIfNoAck()) {
+                }else {
+                    // re-submit this message to the queue, to be retried later
+                    // This is needed for queues with no unack timeout, since messages are removed from the queue
+                	
+                	// update for manheiba @20191208 for transientFailures retry added timeout 60 seconds, default is 5 seconds
+                	logger.info(transientFailures.get(0).toString());
+                	queue.ack(Collections.singletonList(msg));
+                	msg.setTimeout(60_000);
+                    queue.publish(Collections.singletonList(msg));
+                    logger.debug("Message: {} published to queue: {}", msg.getId(), queue.getName());
+                }
+            } catch (Exception e) {
+                logger.error("Error handling message: {} on queue:{}", msg, queue.getName(), e);
+            } finally {
+                Monitors.recordEventQueueMessagesHandled(queue.getType(), queue.getName());
             }
-        } catch (Exception e) {
-            logger.error("Error handling message: {} on queue:{}", msg, queue.getName(), e);
-        } finally {
-            Monitors.recordEventQueueMessagesHandled(queue.getType(), queue.getName());
-        }
+		});
     }
 
     /**
@@ -252,7 +307,12 @@ public class SimpleEventProcessor implements EventProcessor {
             if (output != null) {
                 eventExecution.getOutput().putAll(output);
             }
-            eventExecution.setStatus(Status.COMPLETED);
+            if(output.containsKey("taskerror")) {
+            	eventExecution.setStatus(Status.IN_PROGRESS);
+            }else {
+            	eventExecution.setStatus(Status.COMPLETED);
+            }
+            
         } catch (RuntimeException e) {
             logger.error("Error executing action: {} for event: {} with messageId: {}", action.getAction(), eventExecution.getEvent(), eventExecution.getMessageId(), e);
             if (!isTransientException(e.getCause())) {

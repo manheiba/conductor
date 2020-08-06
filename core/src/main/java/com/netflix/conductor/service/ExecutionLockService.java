@@ -61,7 +61,7 @@ public class ExecutionLockService {
         if (config.enableWorkflowExecutionLock()) {
             Lock lock = lockProvider.get();
             if (!lock.acquireLock(lockId, timeToTryMs, leaseTimeMs, TimeUnit.MILLISECONDS)) {
-                LOGGER.debug("Thread {} failed to acquire lock to lockId {}.", Thread.currentThread().getId(), lockId);
+                LOGGER.info("Thread {} failed to acquire lock to lockId {}.", Thread.currentThread().getId(), lockId);
                 Monitors.recordAcquireLockUnsuccessful();
                 return false;
             }

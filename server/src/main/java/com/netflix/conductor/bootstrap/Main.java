@@ -12,22 +12,24 @@
  */
 package com.netflix.conductor.bootstrap;
 
-import com.google.inject.Guice;
-import com.google.inject.Injector;
-
-import com.netflix.conductor.dao.IndexDAO;
-import com.netflix.conductor.elasticsearch.EmbeddedElasticSearch;
-import com.netflix.conductor.elasticsearch.EmbeddedElasticSearchProvider;
-import com.netflix.conductor.grpc.server.GRPCServerProvider;
-import com.netflix.conductor.jetty.server.JettyServerProvider;
-
-import org.apache.log4j.PropertyConfigurator;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Optional;
 import java.util.Properties;
+
+import org.apache.log4j.PropertyConfigurator;
+
+import com.google.inject.Guice;
+import com.google.inject.Injector;
+import com.netflix.conductor.core.events.SimpleEventProcessor;
+import com.netflix.conductor.core.execution.WorkflowSweeper;
+import com.netflix.conductor.core.execution.tasks.SystemTaskWorkerCoordinator;
+import com.netflix.conductor.dao.IndexDAO;
+import com.netflix.conductor.elasticsearch.EmbeddedElasticSearch;
+import com.netflix.conductor.elasticsearch.EmbeddedElasticSearchProvider;
+import com.netflix.conductor.grpc.server.GRPCServerProvider;
+import com.netflix.conductor.jetty.server.JettyServerProvider;
 
 /**
  * @author Viren Entry point for the server
@@ -97,7 +99,6 @@ public class Main {
                 System.exit(3);
             }
         });
-
     }
 
     private static void loadConfigFile(String propertyFile) throws IOException {

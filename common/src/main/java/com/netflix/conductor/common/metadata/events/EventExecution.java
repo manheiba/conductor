@@ -211,4 +211,12 @@ public class EventExecution {
 		return Objects.hash(id, messageId, name, event, created, status, action, output);
 	}
 
+	@Override
+	public String toString() {
+		return "EventExecution [id=" + id + ", messageId=" + messageId + ", name=" + name + ", event=" + event
+				+ ", created=" + created + ", status=" + status + ", action=" + action + ", output=" + output + "]";
+	}
+
+	
+	
 }

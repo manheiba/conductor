@@ -25,7 +25,11 @@ import com.netflix.conductor.common.run.WorkflowSummary;
 import com.netflix.conductor.core.config.Configuration;
 import com.netflix.conductor.core.events.queue.Message;
 import com.netflix.conductor.core.execution.WorkflowStatusListener;
+import com.netflix.conductor.core.orchestration.ExecutionDAOFacade;
+import com.netflix.conductor.dao.ExecutionDAO;
 import com.netflix.conductor.dao.QueueDAO;
+import com.netflix.conductor.service.WorkflowService;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,12 +47,14 @@ public class DynoQueueStatusPublisher implements WorkflowStatusListener {
     private final Configuration config;
     private final String successStatusQueue;
     private final String failureStatusQueue;
+    ExecutionDAOFacade executionDAOFacade;
 
     @Inject
-    public DynoQueueStatusPublisher(QueueDAO queueDAO, ObjectMapper objectMapper, Configuration config) {
+    public DynoQueueStatusPublisher(QueueDAO queueDAO, ObjectMapper objectMapper, Configuration config,ExecutionDAOFacade executionDAOFacade) {
         this.queueDAO = queueDAO;
         this.objectMapper = objectMapper;
         this.config = config;
+        this.executionDAOFacade = executionDAOFacade;
         this.successStatusQueue = config.getProperty("workflowstatuslistener.publisher.success.queue", "_callbackSuccessQueue");
         this.failureStatusQueue = config.getProperty("workflowstatuslistener.publisher.failure.queue", "_callbackFailureQueue");
     }
@@ -57,12 +63,16 @@ public class DynoQueueStatusPublisher implements WorkflowStatusListener {
     public void onWorkflowCompleted(Workflow workflow) {
         LOGGER.info("Publishing callback of workflow {} on completion ", workflow.getWorkflowId());
         queueDAO.push(successStatusQueue, Collections.singletonList(workflowToMessage(workflow)));
+        //20191109 added by manheiba, archive by Completed
+        //executionDAOFacade.removeWorkflow(workflow.getWorkflowId(), Boolean.TRUE);
     }
 
     @Override
     public void onWorkflowTerminated(Workflow workflow) {
         LOGGER.info("Publishing callback of workflow {} on termination", workflow.getWorkflowId());
         queueDAO.push(failureStatusQueue, Collections.singletonList(workflowToMessage(workflow)));
+        //20191109 added by manheiba, archive by Terminated
+        //executionDAOFacade.removeWorkflow(workflow.getWorkflowId(), Boolean.TRUE);
     }
 
     private Message workflowToMessage(Workflow workflow) {

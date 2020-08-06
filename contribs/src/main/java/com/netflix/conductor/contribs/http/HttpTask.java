@@ -43,7 +43,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
+import com.jayway.jsonpath.JsonPath;
 /**
  * @author Viren
  * Task that enables calling another http endpoint as part of its execution
@@ -86,6 +86,7 @@ public class HttpTask extends WorkflowSystemTask {
 	
 	@Override
 	public void start(Workflow workflow, Task task, WorkflowExecutor executor) {
+		
 		Object request = task.getInputData().get(requestParameter);
 		task.setWorkerId(config.getServerId());
 		if(request == null) {
@@ -109,10 +110,76 @@ public class HttpTask extends WorkflowSystemTask {
 			return;
 		}
 		
+		HttpResponse response = null;
+		long startMillis = System.currentTimeMillis();
 		try {
-			HttpResponse response = httpCall(input);
+			response = httpCall(input);
 			logger.debug("Response: {}, {}, task:{}", response.statusCode, response.body, task.getTaskId());
-			if(response.statusCode > 199 && response.statusCode < 300) {
+			/**
+			 * update by manheiba@163.com
+			 * appRetCode:Represents whether the business system handles successful return codes
+			 * If appRetCode is included in the list of successful return codes (comma-separated) of the code business configured in appRetSuccessCode,
+			 * it represents the success of Httptask processing, otherwise it represents the failure of Httptask processing.
+			 * 
+			 * for example :
+			 * For the value of "0000,1000" in the "appRetSuccessCodes" field , the response.body status "0000 or 1000" for success ,others are failures.
+			 * For the value of "status" in "appRetCodeJsonPath" field , represents jsonpath in response.body.
+			 * {
+				   "http_request": {
+				      "uri": "http://xxx.xx.xx",
+				      "method": "POST",
+				      "connectionTimeOut": 2000,
+				      "readTimeOut": 5000,
+				      "appRetCodeJsonPath": "status",
+				      "appRetSuccessCodes": "0000,1000",
+				      "body": {
+				         "param1": "a1"
+				      }
+				   },
+				   "asyncComplete": false
+				}
+				
+				{
+				   "response": {
+				      "headers": {
+				         "Content-Length": [
+				            "27"
+				         ],
+				         "Date": [
+				            "Fri, 23 Aug 2019 03:23:28 GMT"
+				         ],
+				         "Content-Type": [
+				            "application/json;charset=UTF-8"
+				         ]
+				      },
+				      "reasonPhrase": "OK",
+				      "body": {
+				         "message": "success",
+				         "status": "0000"
+				      },
+				      "statusCode": 200
+				   }
+				}
+			 */
+			boolean appRetStatus = true;
+			String appRetCodeJsonPath = input.getAppRetCodeJsonPath();
+			String appRetSuccessCode = input.getAppRetSuccessCodes();
+			String appRetCode = "";
+			
+			if(appRetCodeJsonPath!=null && !"".equals(appRetCodeJsonPath) && response.statusCode > 199 && response.statusCode < 300 && response.statusCode != 204) {
+				appRetStatus = false;
+				appRetCode = JsonPath.parse(response.body).read(appRetCodeJsonPath).toString();
+				if(appRetSuccessCode!=null && !"".equals(appRetSuccessCode)&&appRetCode!=null&&!"".equals(appRetCode)) {
+					String[] retSuccessCodeArray = appRetSuccessCode.split(",");
+					for(String retSuccessCodeItem : retSuccessCodeArray){
+						if(appRetCode.equals(retSuccessCodeItem)) {
+							appRetStatus = true;
+							break;
+						}
+					}
+				}
+			}
+			if(response.statusCode > 199 && response.statusCode < 300 && appRetStatus) {
 				if (isAsyncComplete(task)) {
 					task.setStatus(Status.IN_PROGRESS);
 				} else {
@@ -120,7 +187,12 @@ public class HttpTask extends WorkflowSystemTask {
 				}
 			} else {
 				if(response.body != null) {
-					task.setReasonForIncompletion(response.body.toString());
+					String reasonForIncompletion = response.body.toString();
+					if(appRetStatus) {
+						task.setReasonForIncompletion(reasonForIncompletion);
+					}else {
+						task.setReasonForIncompletion("[appRetCode check error] "+reasonForIncompletion);
+					}
 				} else {
 					task.setReasonForIncompletion("No response from the remote service");
 				}
@@ -133,9 +205,16 @@ public class HttpTask extends WorkflowSystemTask {
 			
 		}catch(Exception e) {
 			logger.error("Failed to invoke http task: {} - uri: {}, vipAddress: {} in workflow: {}", task.getTaskId(), input.getUri(), input.getVipAddress(), task.getWorkflowInstanceId(), e);
+			String responseBody = "";
+			if(response != null) {
+				responseBody = response.body.toString();
+				logger.error("[HttpTask-ResponseBody]  "+responseBody);
+			}
 			task.setStatus(Status.FAILED);
-			task.setReasonForIncompletion("Failed to invoke http task due to: " + e.toString());
-			task.getOutputData().put("response", e.toString());
+			task.setReasonForIncompletion("Failed to invoke http task due to: " + e.toString() + "   [HttpTask-ResponseBody]    " +responseBody);
+			task.getOutputData().put("response", e.toString()+ "   [HttpTask-ResponseBody]    " +responseBody);
+		}finally {
+			logger.info("{}: workflowid {} taskid {}  Uri {} .It takes {}ms.", task.getTaskType(),workflow.getWorkflowId(),task.getTaskId(), input.getUri(), System.currentTimeMillis()-startMillis);
 		}
 	}
 
@@ -302,8 +381,38 @@ public class HttpTask extends WorkflowSystemTask {
 		private  Integer connectionTimeOut;
 
 		private Integer  readTimeOut;
+		
+		private String appRetCodeJsonPath;
+		
+		private String appRetSuccessCodes;
 
+		/**
+		 * @return the appRetCodeJsonPath
+		 */
+		public String getAppRetCodeJsonPath() {
+			return appRetCodeJsonPath;
+		}
 
+		/**
+		 * @param appRetCodeJsonPath the appRetCodeJsonPath to set
+		 */
+		public void setAppRetCodeJsonPath(String appRetCodeJsonPath) {
+			this.appRetCodeJsonPath = appRetCodeJsonPath;
+		}
+
+		/**
+		 * @return the appRetSuccessCodes
+		 */
+		public String getAppRetSuccessCodes() {
+			return appRetSuccessCodes;
+		}
+		
+		/**
+		 * @param appRetSuccessCodes the appRetSuccessCodes to set
+		 */
+		public void setAppRetSuccessCodes(String appRetSuccessCodes) {
+			this.appRetSuccessCodes = appRetSuccessCodes;
+		}
 
 		/**
 		 * @return the method

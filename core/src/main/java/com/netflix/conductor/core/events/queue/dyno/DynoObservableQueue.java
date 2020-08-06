@@ -33,6 +33,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -52,6 +53,7 @@ public class DynoObservableQueue implements ObservableQueue {
     private final int pollTimeInMS;
     private final int longPollTimeout;
     private final int pollCount;
+    public volatile static boolean isShutdown = false;
 
     @Inject
     DynoObservableQueue(String queueName, QueueDAO queueDAO, Configuration config) {
@@ -71,7 +73,9 @@ public class DynoObservableQueue implements ObservableQueue {
     @Override
     public List<String> ack(List<Message> messages) {
         for (Message msg : messages) {
-            queueDAO.remove(queueName, msg.getId());
+            //queueDAO.remove(queueName, msg.getId());
+        	// update by manheiba @20191217 for double add to the unackqueue
+        	queueDAO.ack(queueName, msg.getId());
         }
         return messages.stream().map(Message::getId).collect(Collectors.toList());
     }
@@ -107,7 +111,16 @@ public class DynoObservableQueue implements ObservableQueue {
 
     @VisibleForTesting
     private List<Message> receiveMessages() {
-        try {
+    	if(isShutdown) {
+            logger.info("shuting down ,stop receive the meessage");
+            try {
+				TimeUnit.SECONDS.sleep(1);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+    		return new ArrayList<>();
+    	}
+		try {
             List<Message> messages = queueDAO.pollMessages(queueName, pollCount, longPollTimeout);
             Monitors.recordEventQueueMessagesProcessed(QUEUE_TYPE, queueName, messages.size());
             return messages;

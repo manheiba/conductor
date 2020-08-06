@@ -18,9 +18,10 @@
  */
 package com.netflix.conductor.core.events.queue;
 
-import rx.Observable;
-
 import java.util.List;
+import java.util.Map;
+
+import rx.Observable;
 
 /**
  * @author Viren

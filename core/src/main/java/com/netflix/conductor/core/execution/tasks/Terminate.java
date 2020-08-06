@@ -11,6 +11,7 @@ import java.util.Map;
 
 import static com.netflix.conductor.common.run.Workflow.WorkflowStatus.COMPLETED;
 import static com.netflix.conductor.common.run.Workflow.WorkflowStatus.FAILED;
+import static com.netflix.conductor.common.run.Workflow.WorkflowStatus.TERMINATED;
 
 /**
  * Task that can terminate a workflow with a given status and modify the workflow's output with a given parameter,
@@ -75,7 +76,8 @@ public class Terminate extends WorkflowSystemTask {
     }
 
     public static Boolean validateInputStatus(String status) {
-        return COMPLETED.name().equals(status) || FAILED.name().equals(status);
+    	// update by manheiba @20191212 for workflow status TERMINATED
+        return COMPLETED.name().equals(status) || FAILED.name().equals(status) || TERMINATED.name().equals(status);
     }
 
     private void setWorkflowOutput(Map<String, Object> taskOutput, Workflow workflow) {

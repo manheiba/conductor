@@ -52,23 +52,32 @@ public class RedisLockModule extends AbstractModule{
             throw new ProvisionException(message, ie);
         }
         String redisServerAddress = clusterConfiguration.getRedisServerAddress();
-
+		String redisServerPassword = clusterConfiguration.getRedisServerPassword();
         Config redisConfig = new Config();
 
         int connectionTimeout = 10000;
         switch (redisServerType) {
             case SINGLE:
+				if(redisServerPassword !=null && !"".equals(redisServerPassword)){
+					redisConfig.useSingleServer().setPassword(redisServerPassword);
+				}
                 redisConfig.useSingleServer()
                         .setAddress(redisServerAddress)
                         .setTimeout(connectionTimeout);
                 break;
             case CLUSTER:
+				if(redisServerPassword !=null && !"".equals(redisServerPassword)){
+					redisConfig.useClusterServers().setPassword(redisServerPassword);
+				}		
                 redisConfig.useClusterServers()
                         .setScanInterval(2000) // cluster state scan interval in milliseconds
                         .addNodeAddress(redisServerAddress.split(","))
                         .setTimeout(connectionTimeout);
                 break;
             case SENTINEL:
+				if(redisServerPassword !=null && !"".equals(redisServerPassword)){
+					redisConfig.useSentinelServers().setPassword(redisServerPassword);
+				}
                 redisConfig.useSentinelServers()
                         .setScanInterval(2000)
                         .addSentinelAddress(redisServerAddress)

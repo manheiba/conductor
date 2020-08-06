@@ -77,7 +77,8 @@ public class Event extends WorkflowSystemTask {
 			String msg = String.format("Error serializing JSON payload for task: %s, workflow: %s", task.getTaskId(), workflow.getWorkflowId());
 			throw new ApplicationException(INTERNAL_ERROR, msg);
 		}
-		Message message = new Message(task.getTaskId(), payloadJson, task.getTaskId());
+		// update by manheiba @ 20191209 delay 10 secodes
+		Message message = new Message(task.getTaskId(), payloadJson, task.getTaskId(),0,10_000);
 		ObservableQueue queue = getQueue(workflow, task);
 		if(queue != null) {
 			queue.publish(Collections.singletonList(message));

@@ -18,13 +18,6 @@
  */
 package com.netflix.conductor.core.execution.tasks;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import com.netflix.conductor.core.config.Configuration;
-import com.netflix.conductor.core.execution.WorkflowExecutor;
-import com.netflix.conductor.core.utils.QueueUtils;
-import com.netflix.conductor.dao.QueueDAO;
-import com.netflix.conductor.metrics.Monitors;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -36,14 +29,28 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
 import javax.inject.Inject;
 import javax.inject.Singleton;
+
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.netflix.conductor.core.config.Configuration;
+import com.netflix.conductor.core.execution.WorkflowExecutor;
+import com.netflix.conductor.core.utils.GracefullyShutdownUtil;
+import com.netflix.conductor.core.utils.HookPriority;
+import com.netflix.conductor.core.utils.QueueUtils;
+import com.netflix.conductor.core.utils.ShutdownHookManager;
+import com.netflix.conductor.dao.QueueDAO;
+import com.netflix.conductor.metrics.Monitors;
 
 /**
  * @author Viren
@@ -59,6 +66,8 @@ public class SystemTaskWorkerCoordinator {
 	private WorkflowExecutor workflowExecutor;
 
 	private ExecutorService executorService;
+	
+	private ScheduledExecutorService executorServiceSingleScheduled;
 
 	private int workerQueueSize;
 
@@ -96,7 +105,7 @@ public class SystemTaskWorkerCoordinator {
 		this.unackTimeout = config.getIntProperty("workflow.system.task.worker.callback.seconds", 30);
 		int threadCount = config.getIntProperty("workflow.system.task.worker.thread.count", 10);
 		this.pollCount = config.getIntProperty("workflow.system.task.worker.poll.count", 10);
-		this.pollInterval = config.getIntProperty("workflow.system.task.worker.poll.interval", 50);
+		this.pollInterval = config.getIntProperty("workflow.system.task.worker.poll.interval", 200);
 		this.workerQueueSize = config.getIntProperty("workflow.system.task.worker.queue.size", 100);
 		this.workerQueue = new LinkedBlockingQueue<>(workerQueueSize);
 		this.executionNameSpace =config.getProperty("workflow.system.task.worker.executionNameSpace","");
@@ -108,12 +117,20 @@ public class SystemTaskWorkerCoordinator {
 	                workerQueue,
 	                threadFactory);
 			this.defaultExecutionConfig = new ExecutionConfig(this.executorService, this.workerQueue);
-			new Thread(this::listen).start();
+			new Thread(this::listen,"Thread-SystemTaskWorkerCoordinator-Single").start();
 			logger.info("System Task Worker initialized with {} threads and a callback time of {} seconds and queue size: {} with pollCount: {} and poll interval: {}", threadCount, unackTimeout, workerQueueSize, pollCount, pollInterval);
 		} else {
 			logger.info("System Task Worker DISABLED");
 		}
+		//Runtime.getRuntime().addShutdownHook(new Thread(()-> {shutdown();}));
+		ShutdownHookManager.get().addShutdownHook(()-> {shutdown();}, 5);
 	}
+	
+    //@PreDestroy
+    private void shutdown() {
+        GracefullyShutdownUtil.shutdownExecutorService("SystemTaskWorkerCoordinator.executorServiceSingleScheduled",executorServiceSingleScheduled,0,30);
+        GracefullyShutdownUtil.shutdownExecutorService("SystemTaskWorkerCoordinator.executorService",executorService,0,30);
+    }
 
 	static synchronized void add(WorkflowSystemTask systemTask) {
 		logger.info("Adding the queue for system task: {}", systemTask.getName());
@@ -138,7 +155,9 @@ public class SystemTaskWorkerCoordinator {
 	}
 
 	private void listen(String queueName) {
-		Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay(() -> pollAndExecute(queueName), 1000, pollInterval, TimeUnit.MILLISECONDS);
+		ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-SystemTaskWorkerCoordinator-SingleScheduled-"+queueName).build();
+		this.executorServiceSingleScheduled = Executors.newSingleThreadScheduledExecutor(threadFactory);
+		this.executorServiceSingleScheduled.scheduleWithFixedDelay(() -> pollAndExecute(queueName), 1000, pollInterval, TimeUnit.MILLISECONDS);
 		logger.info("Started listening for queue: {}", queueName);
 	}
 
@@ -154,7 +173,7 @@ public class SystemTaskWorkerCoordinator {
 			LinkedBlockingQueue<Runnable> workerQueue = executionConfig.workerQueue;
 			int realPollCount = Math.min(workerQueue.remainingCapacity(), pollCount);
 			if (realPollCount <= 0) {
-                logger.debug("All workers are busy, not polling. queue size: {}, max: {}, task:{}", workerQueue.size(),
+                logger.info("All workers are busy, not polling. queue size: {}, max: {}, task:{}", workerQueue.size(),
 					workerQueueSize, queueName);
                 return;
 			}

@@ -15,6 +15,16 @@
  */
 package com.netflix.conductor.core.events;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+import javax.inject.Inject;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.netflix.conductor.common.metadata.events.EventHandler.Action;
 import com.netflix.conductor.common.metadata.events.EventHandler.StartWorkflow;
 import com.netflix.conductor.common.metadata.events.EventHandler.TaskDetails;
@@ -22,18 +32,10 @@ import com.netflix.conductor.common.metadata.tasks.Task;
 import com.netflix.conductor.common.metadata.tasks.Task.Status;
 import com.netflix.conductor.common.metadata.tasks.TaskResult;
 import com.netflix.conductor.common.run.Workflow;
+import com.netflix.conductor.core.execution.ApplicationException;
 import com.netflix.conductor.core.execution.ParametersUtils;
 import com.netflix.conductor.core.execution.WorkflowExecutor;
 import com.netflix.conductor.core.utils.JsonUtils;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import javax.inject.Inject;
-
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * @author Viren
@@ -88,21 +90,42 @@ public class SimpleActionProcessor implements ActionProcessor {
         String taskId = (String) replaced.get("taskId");
         String taskRefName = (String) replaced.get("taskRefName");
 
+        // update by manheiba @20191212 for check workflowId nullable;
+        if (StringUtils.isEmpty(workflowId)) {
+        	replaced.put("error", "workflow id is null");
+            return replaced;
+        }
         Task task = null;
         if (StringUtils.isNotEmpty(taskId)) {
             task = executor.getTask(taskId);
         } else if (StringUtils.isNotEmpty(workflowId) && StringUtils.isNotEmpty(taskRefName)) {
             Workflow workflow = executor.getWorkflow(workflowId, true);
             if (workflow == null) {
+            	logger.error("No workflow found with ID: {}" , workflowId);
                 replaced.put("error", "No workflow found with ID: " + workflowId);
                 return replaced;
             }
+            // update by manheiba @20191212 check workflow status  is Terminal;
+            if (workflow.getStatus().isTerminal()) {
+            	logger.error("Workflow {} status is Terminal. Status is {} " ,workflow.getWorkflowId(), workflow.getStatus());
+                replaced.put("error", "Workflow status is Terminal. Status is " + workflow.getStatus());
+                return replaced;
+            }
+            
+            // TODO: manheiba@20121226 check contained taskdefine
             task = workflow.getTaskByRefName(taskRefName);
-        }
+        } 
 
-        if (task == null) {
-            replaced.put("error", "No task found with taskId: " + taskId + ", reference name: " + taskRefName + ", workflowId: " + workflowId);
+        if (task == null ) {
+        	replaced.put("taskerror", "No task found with taskId: " + taskId + ", reference name: " + taskRefName + ", workflowId: " + workflowId );
+            replaced.put("error", "No task found with taskId: " + taskId + ", reference name: " + taskRefName + ", workflowId: " + workflowId );
             return replaced;
+        } else if(task.getStatus() == Task.Status.SCHEDULED ){
+        	replaced.put("taskerror", "Task.status not IN_PROGRESS: " + taskId + ", reference name: " + taskRefName + ", workflowId: " + workflowId +" or task.status is "+task.getStatus());
+            replaced.put("error","Task.status not IN_PROGRESS: " + taskId + ", reference name: " + taskRefName + ", workflowId: " + workflowId +" or task.status is "+task.getStatus());
+            return replaced;
+        }else {
+        	taskId = task.getTaskId();
         }
 
         task.setStatus(status);
@@ -115,7 +138,12 @@ public class SimpleActionProcessor implements ActionProcessor {
             executor.updateTask(new TaskResult(task));
             logger.debug("Updated task: {} in workflow:{} with status: {} for event: {} for message:{}", taskId, workflowId, status, event, messageId);
         } catch (RuntimeException e) {
-            logger.error("Error updating task: {} in workflow: {} in action: {} for event: {} for message: {}", taskDetails.getTaskRefName(), taskDetails.getWorkflowId(), action.getAction(), event, messageId, e);
+            if (e instanceof ApplicationException && ((ApplicationException) e).getCode() == ApplicationException.Code.LOCKED_ERROR) {
+            	replaced.put("taskerror", "Task " + taskId +" had be locked. workflow id is "+ workflowId);
+                replaced.put("error", "Task " + taskId +" had be locked. workflow id is "+ workflowId);
+                return replaced;
+            }
+            logger.error("Error updating task: {} in workflow: {} in action: {} for event: {} for message: {}", taskDetails.getTaskRefName(), workflowId, action.getAction(), event, messageId, e);
             replaced.put("error", e.getMessage());
             throw e;
         }

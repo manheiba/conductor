@@ -89,6 +89,9 @@ public class WorkflowSummary {
 	@ProtoField(id = 17)
 	private int priority;
 	
+	@ProtoField(id = 99)
+	private String archived;
+	
 	public WorkflowSummary() {
 		
 	}
@@ -130,6 +133,10 @@ public class WorkflowSummary {
 		if (StringUtils.isNotBlank(workflow.getExternalOutputPayloadStoragePath())) {
 			this.externalOutputPayloadStoragePath = workflow.getExternalOutputPayloadStoragePath();
 		}
+		if (StringUtils.isNotBlank(workflow.getArchived())) {
+			this.archived = workflow.getArchived();
+		}
+		
 	}
 
 	/**
@@ -340,6 +347,14 @@ public class WorkflowSummary {
 		this.priority = priority;
 	}
 
+	
+	public String getArchived() {
+		return archived;
+	}
+	public void setArchived(String archived) {
+		this.archived = archived;
+	}
+	
 	@Override
 	public boolean equals(Object o) {
 		if (this == o) {

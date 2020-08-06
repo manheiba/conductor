@@ -870,25 +870,27 @@ public class ElasticSearchRestDAOV6 extends ElasticSearchBaseDAO implements Inde
 
     private void indexObject(final String index, final String docType, final String docId, final Object doc) {
 
-        byte[] docBytes;
-        try {
-            docBytes = objectMapper.writeValueAsBytes(doc);
-        } catch (JsonProcessingException e) {
-            logger.error("Failed to convert {} '{}' to byte string", docType, docId);
-            return;
-        }
+// update by manheiba@20191117
+//        byte[] docBytes;
+//        try {
+//            docBytes = objectMapper.writeValueAsBytes(doc);
+//        } catch (JsonProcessingException e) {
+//            logger.error("Failed to convert {} '{}' to byte string", docType, docId);
+//            return;
+//        }
+//
+//        IndexRequest request = new IndexRequest(index, docType, docId);
+//        request.source(docBytes, XContentType.JSON);
+//
+//        if(bulkRequests.get(docType) == null) {
+//            bulkRequests.put(docType, new BulkRequests(System.currentTimeMillis(), new BulkRequest()));
+//        }
+//
+//        bulkRequests.get(docType).getBulkRequest().add(request);
+//        if (bulkRequests.get(docType).getBulkRequest().numberOfActions() >= this.indexBatchSize) {
+//            indexBulkRequest(docType);
+//        }
 
-        IndexRequest request = new IndexRequest(index, docType, docId);
-        request.source(docBytes, XContentType.JSON);
-
-        if(bulkRequests.get(docType) == null) {
-            bulkRequests.put(docType, new BulkRequests(System.currentTimeMillis(), new BulkRequest()));
-        }
-
-        bulkRequests.get(docType).getBulkRequest().add(request);
-        if (bulkRequests.get(docType).getBulkRequest().numberOfActions() >= this.indexBatchSize) {
-            indexBulkRequest(docType);
-        }
     }
 
     private synchronized void indexBulkRequest(String docType) {

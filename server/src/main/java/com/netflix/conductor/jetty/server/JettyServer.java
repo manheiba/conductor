@@ -70,6 +70,7 @@ public class JettyServer implements Lifecycle {
         context.setWelcomeFiles(new String[]{"index.html"});
 
         server.setHandler(context);
+        
         if (getBoolean("enableJMX")) {
             System.out.println("configure MBean container...");
             configureMBeanContainer(server);

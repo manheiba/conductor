@@ -34,6 +34,9 @@ public class Message {
 
 	private int priority;
 	
+	// update by manheiba @20191212 for event retry
+    private long timeout;
+	
 	public Message() {
 		
 	}
@@ -49,6 +52,14 @@ public class Message {
 		this.id = id;
 		this.receipt = receipt;
 		this.priority = priority;
+	}
+	
+	public Message(String id, String payload, String receipt, int priority,long timeout) {
+		this.payload = payload;
+		this.id = id;
+		this.receipt = receipt;
+		this.priority = priority;
+		this.timeout = timeout;
 	}
 
 	/**
@@ -126,12 +137,21 @@ public class Message {
 		return Objects.equals(payload, message.payload) &&
 				Objects.equals(id, message.id) &&
 				Objects.equals(priority, message.priority) &&
-				Objects.equals(receipt, message.receipt);
+				Objects.equals(receipt, message.receipt) &&
+				Objects.equals(timeout, message.timeout);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(payload, id, receipt, priority);
+		return Objects.hash(payload, id, receipt, priority,timeout);
+	}
+
+	public long getTimeout() {
+		return timeout;
+	}
+
+	public void setTimeout(long timeout) {
+		this.timeout = timeout;
 	}
 
 }

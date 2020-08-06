@@ -94,6 +94,7 @@ public class RetryUtil<T> {
                               int retryCount,
                               String shortDescription, String operationName) throws RuntimeException {
 
+    	// update by manheiba @20191212 change logger lever dubug 2 info
         Retryer<T> retryer = RetryerBuilder.<T>newBuilder()
                 .retryIfException(Optional.ofNullable(throwablePredicate).orElse(exception -> true))
                 .retryIfResult(Optional.ofNullable(resultRetryPredicate).orElse(result -> false))
@@ -118,7 +119,7 @@ public class RetryUtil<T> {
         } catch (ExecutionException executionException) {
             String errorMessage = format("Operation '%s:%s' failed for the %d time in RetryUtil", operationName,
                     shortDescription, internalNumberOfRetries.get());
-            logger.debug(errorMessage);
+            logger.error(errorMessage);
             throw new RuntimeException(errorMessage, executionException.getCause());
         } catch (RetryException retryException) {
             String errorMessage = format("Operation '%s:%s' failed after retrying %d times, retry limit %d", operationName,

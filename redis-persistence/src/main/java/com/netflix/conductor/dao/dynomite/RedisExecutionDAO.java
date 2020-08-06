@@ -319,6 +319,8 @@ public class RedisExecutionDAO extends BaseDynoDAO implements ExecutionDAO {
 			dynoClient.srem(nsKey(CORR_ID_TO_WORKFLOWS, workflow.getCorrelationId()), workflowId);
 			dynoClient.srem(nsKey(PENDING_WORKFLOWS, workflow.getWorkflowName()), workflowId);
 
+			// update by manheiba @20191218 rem WORKFLOW_TO_TASKS.
+			dynoClient.del(nsKey(WORKFLOW_TO_TASKS,workflowId ));
 			// Remove the object
 			dynoClient.del(nsKey(WORKFLOW, workflowId));
 			for (Task task : workflow.getTasks()) {

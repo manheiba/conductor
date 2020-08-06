@@ -10,13 +10,15 @@ dependencies {
 
 	compile "com.sun.jersey.contribs.jersey-oauth:oauth-client:${revOauthClient}"
 	compile "com.sun.jersey.contribs.jersey-oauth:oauth-signature:${revOauthSignature}"
-
+	//compile "com.netflix.eureka:eureka-client:${revEurekaClient}"
 	compile "io.nats:java-nats-streaming:${revNatsStreaming}"
 
 	compileOnly "javax.ws.rs:jsr311-api:${revJsr311Api}"
 	compile "io.swagger:swagger-jaxrs:${revSwagger}"
 
 	compile "org.apache.kafka:kafka-clients:2.2.0"
+	compile "com.netflix.spectator:spectator-reg-metrics3:0.88.0"
+
 	testCompile "org.eclipse.jetty:jetty-server:${revJetteyServer}"
 	testCompile "org.eclipse.jetty:jetty-servlet:${revJettyServlet}"
 }
